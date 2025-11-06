@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -6,6 +6,23 @@ import Icon from '@/components/ui/icon';
 import { toast } from '@/hooks/use-toast';
 
 type Zone = 'counter' | 'storage' | 'fitting' | 'waiting' | 'overview';
+
+type ViewPoint = {
+  id: Zone;
+  name: string;
+  image: string;
+  hotspots: Hotspot[];
+};
+
+type Hotspot = {
+  id: string;
+  x: number;
+  y: number;
+  label: string;
+  type: 'navigation' | 'interaction';
+  action: () => void;
+  icon?: string;
+};
 
 type Order = {
   id: string;
@@ -51,6 +68,11 @@ const Index = () => {
   const [scanCode, setScanCode] = useState('');
   const [isBreak, setIsBreak] = useState(false);
   const [time, setTime] = useState(9);
+  const [isPanoramaMode, setIsPanoramaMode] = useState(false);
+  const [mousePos, setMousePos] = useState({ x: 0, y: 0 });
+  const [isDragging, setIsDragging] = useState(false);
+  const [rotation, setRotation] = useState(0);
+  const panoramaRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     generateInitialOrders();
@@ -203,6 +225,137 @@ const Index = () => {
       title: isBreak ? '🚀 Рабочий режим' : '☕ Перерыв',
       description: isBreak ? 'Возвращаемся к работе' : 'Табличка "Перерыв" на двери',
     });
+  };
+
+  const viewPoints: ViewPoint[] = [
+    {
+      id: 'counter',
+      name: 'Стойка выдачи',
+      image: 'https://cdn.poehali.dev/projects/c2bf80d2-82be-4989-85fc-550c0cb757ac/files/c2ae22f0-7d8c-4e64-929d-1c340f6d6492.jpg',
+      hotspots: [
+        { id: 'computer', x: 50, y: 45, label: 'Компьютер', type: 'interaction', action: () => {
+          toast({ title: '💻 Система управления', description: 'Открыта база данных заказов' });
+        }, icon: 'Monitor' },
+        { id: 'scanner', x: 60, y: 55, label: 'Сканер', type: 'interaction', action: () => {
+          setCurrentZone('storage');
+          setIsPanoramaMode(false);
+        }, icon: 'Scan' },
+        { id: 'to-storage', x: 80, y: 50, label: 'На склад →', type: 'navigation', action: () => {
+          setCurrentZone('storage');
+        }, icon: 'ArrowRight' },
+      ],
+    },
+    {
+      id: 'storage',
+      name: 'Склад со стеллажами',
+      image: 'https://cdn.poehali.dev/projects/c2bf80d2-82be-4989-85fc-550c0cb757ac/files/beece54b-3e1f-44f2-86fb-fd0268ef5a74.jpg',
+      hotspots: [
+        { id: 'shelf-a', x: 30, y: 40, label: 'Стеллаж A', type: 'interaction', action: () => {
+          toast({ title: '📦 Стеллаж A', description: `Заказов: ${orders.filter(o => o.cell.startsWith('A')).length}` });
+        }, icon: 'Package' },
+        { id: 'shelf-b', x: 50, y: 40, label: 'Стеллаж B', type: 'interaction', action: () => {
+          toast({ title: '📦 Стеллаж B', description: `Заказов: ${orders.filter(o => o.cell.startsWith('B')).length}` });
+        }, icon: 'Package' },
+        { id: 'to-counter', x: 20, y: 50, label: '← К стойке', type: 'navigation', action: () => {
+          setCurrentZone('counter');
+        }, icon: 'ArrowLeft' },
+        { id: 'accept-delivery', x: 70, y: 60, label: 'Принять посылки', type: 'interaction', action: acceptDelivery, icon: 'Truck' },
+      ],
+    },
+  ];
+
+  const handleMouseDown = (e: React.MouseEvent) => {
+    setIsDragging(true);
+    setMousePos({ x: e.clientX, y: e.clientY });
+  };
+
+  const handleMouseMove = (e: React.MouseEvent) => {
+    if (!isDragging) return;
+    const deltaX = e.clientX - mousePos.x;
+    setRotation((prev) => prev + deltaX * 0.1);
+    setMousePos({ x: e.clientX, y: e.clientY });
+  };
+
+  const handleMouseUp = () => {
+    setIsDragging(false);
+  };
+
+  const renderPanoramaView = () => {
+    const currentView = viewPoints.find((vp) => vp.id === currentZone);
+    if (!currentView) return null;
+
+    return (
+      <div className="fixed inset-0 z-40 bg-black">
+        <div
+          ref={panoramaRef}
+          className="relative w-full h-full overflow-hidden cursor-grab active:cursor-grabbing"
+          onMouseDown={handleMouseDown}
+          onMouseMove={handleMouseMove}
+          onMouseUp={handleMouseUp}
+          onMouseLeave={handleMouseUp}
+        >
+          <img
+            src={currentView.image}
+            alt={currentView.name}
+            className="absolute top-0 left-0 h-full w-auto min-w-full object-cover select-none"
+            style={{
+              transform: `translateX(calc(-50% + ${rotation}px))`,
+              transition: isDragging ? 'none' : 'transform 0.3s ease-out',
+            }}
+            draggable={false}
+          />
+
+          {currentView.hotspots.map((hotspot) => (
+            <button
+              key={hotspot.id}
+              className="absolute bg-primary/90 hover:bg-primary text-white rounded-full w-16 h-16 flex items-center justify-center shadow-lg hover:scale-110 transition-all animate-pulse-glow"
+              style={{
+                left: `${hotspot.x}%`,
+                top: `${hotspot.y}%`,
+                transform: 'translate(-50%, -50%)',
+              }}
+              onClick={(e) => {
+                e.stopPropagation();
+                hotspot.action();
+              }}
+              title={hotspot.label}
+            >
+              <Icon name={hotspot.icon || 'Circle'} size={28} />
+            </button>
+          ))}
+
+          <div className="absolute top-0 left-0 right-0 p-4 bg-gradient-to-b from-black/70 to-transparent">
+            <div className="flex items-center justify-between text-white">
+              <div className="flex items-center gap-3">
+                <Icon name="Maximize2" size={24} />
+                <span className="text-xl font-heading font-bold">{currentView.name}</span>
+              </div>
+              <Button
+                onClick={() => setIsPanoramaMode(false)}
+                variant="secondary"
+                size="sm"
+              >
+                <Icon name="X" size={16} className="mr-2" />
+                Выйти из панорамы
+              </Button>
+            </div>
+          </div>
+
+          <div className="absolute bottom-4 left-1/2 -translate-x-1/2 bg-white/90 backdrop-blur-sm rounded-full px-6 py-3 flex gap-2">
+            {viewPoints.map((vp) => (
+              <Button
+                key={vp.id}
+                onClick={() => setCurrentZone(vp.id)}
+                variant={currentZone === vp.id ? 'default' : 'outline'}
+                size="sm"
+              >
+                {vp.name}
+              </Button>
+            ))}
+          </div>
+        </div>
+      </div>
+    );
   };
 
   const renderZoneContent = () => {
@@ -500,17 +653,30 @@ const Index = () => {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-purple-50 font-body">
+      {isPanoramaMode && renderPanoramaView()}
+      
       <div className="sticky top-0 z-50 bg-white/95 backdrop-blur-sm border-b shadow-sm">
         <div className="container mx-auto px-4 py-3">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-4">
               <Button
-                onClick={() => setCurrentZone('overview')}
+                onClick={() => {
+                  setCurrentZone('overview');
+                  setIsPanoramaMode(false);
+                }}
                 variant={currentZone === 'overview' ? 'default' : 'ghost'}
                 size="sm"
               >
                 <Icon name="Home" size={16} className="mr-2" />
                 Обзор
+              </Button>
+              <Button
+                onClick={() => setIsPanoramaMode(!isPanoramaMode)}
+                variant={isPanoramaMode ? 'default' : 'outline'}
+                size="sm"
+              >
+                <Icon name="Maximize2" size={16} className="mr-2" />
+                Панорама 360°
               </Button>
               <div className="hidden md:flex items-center gap-2">
                 <Icon name="Clock" size={16} className="text-muted-foreground" />
@@ -546,7 +712,7 @@ const Index = () => {
         {renderZoneContent()}
       </div>
 
-      <div className="fixed bottom-4 right-4 bg-white rounded-lg shadow-lg p-3 border-2 border-primary/20">
+      <div className="fixed bottom-4 right-4 bg-white rounded-lg shadow-lg p-3 border-2 border-primary/20 z-30">
         <div className="flex items-center gap-2 mb-2">
           <div className="w-3 h-3 rounded-full bg-red-500 animate-pulse"></div>
           <p className="text-xs font-semibold text-muted-foreground">КАМЕРА НАБЛЮДЕНИЯ</p>
